@@ -26,16 +26,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# IPFS API endpoint
-# For production, use a public IPFS gateway or set up authentication with Infura
-IPFS_API_URL = os.getenv("IPFS_API_URL", "http://127.0.0.1:5001/api/v0")
-# Ensure the URL includes /api/v0 path
-if not IPFS_API_URL.endswith("/api/v0"):
-    IPFS_API_URL = f"{IPFS_API_URL}/api/v0"
-
 # Infura authentication (if using Infura)
 INFURA_PROJECT_ID = os.getenv("INFURA_PROJECT_ID", "")
 INFURA_PROJECT_SECRET = os.getenv("INFURA_PROJECT_SECRET", "")
+
+# IPFS API endpoint
+# For Infura, use the dedicated endpoint with project ID
+if INFURA_PROJECT_ID:
+    IPFS_API_URL = f"https://ipfs.infura.io:5001/api/v0"
+else:
+    IPFS_API_URL = os.getenv("IPFS_API_URL", "http://127.0.0.1:5001/api/v0")
+    # Ensure the URL includes /api/v0 path
+    if not IPFS_API_URL.endswith("/api/v0"):
+        IPFS_API_URL = f"{IPFS_API_URL}/api/v0"
 
 # Create auth headers for Infura if credentials are provided
 def get_ipfs_headers():
@@ -46,6 +49,10 @@ def get_ipfs_headers():
         credentials = f"{INFURA_PROJECT_ID}:{INFURA_PROJECT_SECRET}"
         encoded = b64encode(credentials.encode()).decode()
         headers["Authorization"] = f"Basic {encoded}"
+        print(f"DEBUG: Using Infura auth with Project ID: {INFURA_PROJECT_ID[:8]}...")
+        print(f"DEBUG: Auth header length: {len(headers['Authorization'])}")
+    else:
+        print("DEBUG: No Infura credentials found")
     return headers
 
 # Server keypair for key wrapping (X25519)
@@ -85,11 +92,14 @@ async def health_check():
     
     try:
         async with httpx.AsyncClient() as client:
+            headers = get_ipfs_headers()
+            print(f"DEBUG: Calling IPFS at {IPFS_API_URL}/id")
             response = await client.post(
                 f"{IPFS_API_URL}/id", 
-                headers=get_ipfs_headers(),
+                headers=headers,
                 timeout=5.0
             )
+            print(f"DEBUG: IPFS response status: {response.status_code}")
             if response.status_code == 200:
                 ipfs_info = response.json()
                 ipfs_connected = True
@@ -98,9 +108,11 @@ async def health_check():
                     "ipfs_agent": ipfs_info.get("AgentVersion")
                 }
             else:
-                error_msg = f"IPFS returned status {response.status_code}"
+                error_msg = f"IPFS returned status {response.status_code}: {response.text[:200]}"
+                print(f"DEBUG: IPFS error response: {response.text[:500]}")
     except Exception as e:
         error_msg = str(e)
+        print(f"DEBUG: IPFS connection exception: {e}")
     
     result = {
         "status": "healthy" if ipfs_connected else "degraded",
