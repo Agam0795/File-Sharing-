@@ -27,6 +27,9 @@ app.add_middleware(
 
 # IPFS API endpoint
 IPFS_API_URL = os.getenv("IPFS_API_URL", "http://127.0.0.1:5001/api/v0")
+# Ensure the URL includes /api/v0 path
+if not IPFS_API_URL.endswith("/api/v0"):
+    IPFS_API_URL = f"{IPFS_API_URL}/api/v0"
 
 # Server keypair for key wrapping (X25519)
 SERVER_PRIVATE_KEY = nacl.public.PrivateKey.generate()
