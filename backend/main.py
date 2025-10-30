@@ -62,23 +62,37 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Check if the API and IPFS node are healthy"""
+    ipfs_connected = False
+    ipfs_info_data = {}
+    error_msg = None
+    
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(f"{IPFS_API_URL}/id", timeout=5.0)
             if response.status_code == 200:
                 ipfs_info = response.json()
-                return {
-                    "status": "healthy",
-                    "ipfs_connected": True,
+                ipfs_connected = True
+                ipfs_info_data = {
                     "ipfs_id": ipfs_info.get("ID"),
                     "ipfs_agent": ipfs_info.get("AgentVersion")
                 }
+            else:
+                error_msg = f"IPFS returned status {response.status_code}"
     except Exception as e:
-        return {
-            "status": "degraded",
-            "ipfs_connected": False,
-            "error": str(e)
-        }
+        error_msg = str(e)
+    
+    result = {
+        "status": "healthy" if ipfs_connected else "degraded",
+        "ipfs_connected": ipfs_connected,
+        "ipfs_url": IPFS_API_URL
+    }
+    
+    if ipfs_connected:
+        result.update(ipfs_info_data)
+    elif error_msg:
+        result["error"] = error_msg
+    
+    return result
 
 
 @app.get("/api/server/public-key")
