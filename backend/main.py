@@ -31,14 +31,17 @@ INFURA_PROJECT_ID = os.getenv("INFURA_PROJECT_ID", "")
 INFURA_PROJECT_SECRET = os.getenv("INFURA_PROJECT_SECRET", "")
 
 # IPFS API endpoint
-# For Infura, use the dedicated endpoint with project ID
+# For Infura, use the project-specific endpoint format
 if INFURA_PROJECT_ID:
+    # Infura uses project-specific subdomains: https://{project-id}.ipfs.infura-ipfs.io
     IPFS_API_URL = f"https://ipfs.infura.io:5001/api/v0"
+    print(f"INFO: Using Infura IPFS endpoint with Basic Auth")
 else:
     IPFS_API_URL = os.getenv("IPFS_API_URL", "http://127.0.0.1:5001/api/v0")
     # Ensure the URL includes /api/v0 path
     if not IPFS_API_URL.endswith("/api/v0"):
         IPFS_API_URL = f"{IPFS_API_URL}/api/v0"
+    print(f"INFO: Using local/custom IPFS endpoint: {IPFS_API_URL}")
 
 # Create auth headers for Infura if credentials are provided
 def get_ipfs_headers():
@@ -118,13 +121,16 @@ async def health_check():
         "status": "healthy" if ipfs_connected else "degraded",
         "ipfs_connected": ipfs_connected,
         "ipfs_url": IPFS_API_URL,
-        "has_infura_creds": bool(INFURA_PROJECT_ID and INFURA_PROJECT_SECRET)
+        "has_infura_creds": bool(INFURA_PROJECT_ID and INFURA_PROJECT_SECRET),
+        "note": "Infura IPFS service was deprecated in 2023. Consider using Pinata or Web3.Storage." if INFURA_PROJECT_ID else None
     }
     
     if ipfs_connected:
         result.update(ipfs_info_data)
     elif error_msg:
         result["error"] = error_msg
+        if "401" in error_msg and INFURA_PROJECT_ID:
+            result["solution"] = "Infura no longer provides IPFS service. Switch to Pinata (pinata.cloud) or Web3.Storage (web3.storage)"
     
     return result
 
