@@ -1,0 +1,9 @@
+# Netlify Configuration for Frontend Only
+[build]
+  publish = "frontend/dist"
+  command = "cd frontend && npm run build"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
