@@ -8,6 +8,7 @@ import nacl.encoding
 import base64
 from typing import Optional
 import os
+from base64 import b64encode
 
 app = FastAPI(title="DecentraShare API", version="1.0.0")
 
@@ -26,10 +27,26 @@ app.add_middleware(
 )
 
 # IPFS API endpoint
+# For production, use a public IPFS gateway or set up authentication with Infura
 IPFS_API_URL = os.getenv("IPFS_API_URL", "http://127.0.0.1:5001/api/v0")
 # Ensure the URL includes /api/v0 path
 if not IPFS_API_URL.endswith("/api/v0"):
     IPFS_API_URL = f"{IPFS_API_URL}/api/v0"
+
+# Infura authentication (if using Infura)
+INFURA_PROJECT_ID = os.getenv("INFURA_PROJECT_ID", "")
+INFURA_PROJECT_SECRET = os.getenv("INFURA_PROJECT_SECRET", "")
+
+# Create auth headers for Infura if credentials are provided
+def get_ipfs_headers():
+    """Get headers for IPFS requests, including Infura auth if configured"""
+    headers = {}
+    if INFURA_PROJECT_ID and INFURA_PROJECT_SECRET:
+        # Basic auth for Infura
+        credentials = f"{INFURA_PROJECT_ID}:{INFURA_PROJECT_SECRET}"
+        encoded = b64encode(credentials.encode()).decode()
+        headers["Authorization"] = f"Basic {encoded}"
+    return headers
 
 # Server keypair for key wrapping (X25519)
 SERVER_PRIVATE_KEY = nacl.public.PrivateKey.generate()
@@ -68,7 +85,11 @@ async def health_check():
     
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(f"{IPFS_API_URL}/id", timeout=5.0)
+            response = await client.post(
+                f"{IPFS_API_URL}/id", 
+                headers=get_ipfs_headers(),
+                timeout=5.0
+            )
             if response.status_code == 200:
                 ipfs_info = response.json()
                 ipfs_connected = True
@@ -150,6 +171,7 @@ async def add_to_ipfs(file: UploadFile = File(...)):
             response = await client.post(
                 f"{IPFS_API_URL}/add",
                 files=files,
+                headers=get_ipfs_headers(),
                 params={"pin": "true"},
                 timeout=30.0
             )
@@ -182,6 +204,7 @@ async def cat_from_ipfs(cid: str):
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{IPFS_API_URL}/cat",
+                headers=get_ipfs_headers(),
                 params={"arg": cid},
                 timeout=30.0
             )
@@ -212,6 +235,7 @@ async def pin_to_ipfs(request: PinRequest):
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{IPFS_API_URL}/pin/add",
+                headers=get_ipfs_headers(),
                 params={"arg": request.cid},
                 timeout=30.0
             )
@@ -238,6 +262,7 @@ async def get_peers():
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{IPFS_API_URL}/swarm/peers",
+                headers=get_ipfs_headers(),
                 timeout=10.0
             )
             
