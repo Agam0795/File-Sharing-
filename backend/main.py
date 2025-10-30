@@ -31,6 +31,13 @@ PINATA_API_KEY = os.getenv("PINATA_API_KEY", "")
 PINATA_SECRET_KEY = os.getenv("PINATA_SECRET_KEY", "")
 PINATA_JWT = os.getenv("PINATA_JWT", "")
 
+# Debug: Log what credentials are available
+print(f"DEBUG: PINATA_API_KEY present: {bool(PINATA_API_KEY)}")
+print(f"DEBUG: PINATA_SECRET_KEY present: {bool(PINATA_SECRET_KEY)}")
+print(f"DEBUG: PINATA_JWT present: {bool(PINATA_JWT)}")
+if PINATA_JWT:
+    print(f"DEBUG: PINATA_JWT length: {len(PINATA_JWT)}")
+
 # IPFS provider configuration
 USE_PINATA = bool(PINATA_API_KEY or PINATA_JWT)
 
@@ -38,6 +45,7 @@ if USE_PINATA:
     IPFS_API_URL = "https://api.pinata.cloud"
     IPFS_GATEWAY = "https://gateway.pinata.cloud/ipfs"
     print(f"INFO: Using Pinata IPFS service")
+    print(f"DEBUG: Pinata auth method: {'JWT' if PINATA_JWT else 'API Key'}")
 else:
     IPFS_API_URL = os.getenv("IPFS_API_URL", "http://127.0.0.1:5001/api/v0")
     IPFS_GATEWAY = "http://127.0.0.1:8080/ipfs"
@@ -54,11 +62,17 @@ def get_ipfs_headers():
         # Pinata can use either JWT or API Key + Secret
         if PINATA_JWT:
             headers["Authorization"] = f"Bearer {PINATA_JWT}"
-            print(f"DEBUG: Using Pinata JWT authentication")
+            print(f"DEBUG: Using Pinata JWT authentication (length: {len(PINATA_JWT)})")
+            print(f"DEBUG: JWT starts with: {PINATA_JWT[:20]}...")
         elif PINATA_API_KEY and PINATA_SECRET_KEY:
             headers["pinata_api_key"] = PINATA_API_KEY
             headers["pinata_secret_api_key"] = PINATA_SECRET_KEY
             print(f"DEBUG: Using Pinata API Key authentication")
+            print(f"DEBUG: API Key: {PINATA_API_KEY[:8]}...")
+        else:
+            print(f"WARNING: USE_PINATA is True but no credentials found!")
+    else:
+        print(f"DEBUG: Not using Pinata, no auth headers needed")
     return headers
 
 # Server keypair for key wrapping (X25519)
