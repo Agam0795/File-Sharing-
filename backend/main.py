@@ -105,7 +105,8 @@ async def health_check():
     result = {
         "status": "healthy" if ipfs_connected else "degraded",
         "ipfs_connected": ipfs_connected,
-        "ipfs_url": IPFS_API_URL
+        "ipfs_url": IPFS_API_URL,
+        "has_infura_creds": bool(INFURA_PROJECT_ID and INFURA_PROJECT_SECRET)
     }
     
     if ipfs_connected:
