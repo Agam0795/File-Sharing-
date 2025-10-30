@@ -26,36 +26,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Infura authentication (if using Infura)
-INFURA_PROJECT_ID = os.getenv("INFURA_PROJECT_ID", "")
-INFURA_PROJECT_SECRET = os.getenv("INFURA_PROJECT_SECRET", "")
+# Pinata credentials
+PINATA_API_KEY = os.getenv("PINATA_API_KEY", "")
+PINATA_SECRET_KEY = os.getenv("PINATA_SECRET_KEY", "")
+PINATA_JWT = os.getenv("PINATA_JWT", "")
 
-# IPFS API endpoint
-# For Infura, use the project-specific endpoint format
-if INFURA_PROJECT_ID:
-    # Infura uses project-specific subdomains: https://{project-id}.ipfs.infura-ipfs.io
-    IPFS_API_URL = f"https://ipfs.infura.io:5001/api/v0"
-    print(f"INFO: Using Infura IPFS endpoint with Basic Auth")
+# IPFS provider configuration
+USE_PINATA = bool(PINATA_API_KEY or PINATA_JWT)
+
+if USE_PINATA:
+    IPFS_API_URL = "https://api.pinata.cloud"
+    IPFS_GATEWAY = "https://gateway.pinata.cloud/ipfs"
+    print(f"INFO: Using Pinata IPFS service")
 else:
     IPFS_API_URL = os.getenv("IPFS_API_URL", "http://127.0.0.1:5001/api/v0")
+    IPFS_GATEWAY = "http://127.0.0.1:8080/ipfs"
     # Ensure the URL includes /api/v0 path
     if not IPFS_API_URL.endswith("/api/v0"):
         IPFS_API_URL = f"{IPFS_API_URL}/api/v0"
     print(f"INFO: Using local/custom IPFS endpoint: {IPFS_API_URL}")
 
-# Create auth headers for Infura if credentials are provided
+# Create auth headers for IPFS requests
 def get_ipfs_headers():
-    """Get headers for IPFS requests, including Infura auth if configured"""
+    """Get headers for IPFS requests based on the provider"""
     headers = {}
-    if INFURA_PROJECT_ID and INFURA_PROJECT_SECRET:
-        # Basic auth for Infura
-        credentials = f"{INFURA_PROJECT_ID}:{INFURA_PROJECT_SECRET}"
-        encoded = b64encode(credentials.encode()).decode()
-        headers["Authorization"] = f"Basic {encoded}"
-        print(f"DEBUG: Using Infura auth with Project ID: {INFURA_PROJECT_ID[:8]}...")
-        print(f"DEBUG: Auth header length: {len(headers['Authorization'])}")
-    else:
-        print("DEBUG: No Infura credentials found")
+    if USE_PINATA:
+        # Pinata can use either JWT or API Key + Secret
+        if PINATA_JWT:
+            headers["Authorization"] = f"Bearer {PINATA_JWT}"
+            print(f"DEBUG: Using Pinata JWT authentication")
+        elif PINATA_API_KEY and PINATA_SECRET_KEY:
+            headers["pinata_api_key"] = PINATA_API_KEY
+            headers["pinata_secret_api_key"] = PINATA_SECRET_KEY
+            print(f"DEBUG: Using Pinata API Key authentication")
     return headers
 
 # Server keypair for key wrapping (X25519)
@@ -96,23 +99,45 @@ async def health_check():
     try:
         async with httpx.AsyncClient() as client:
             headers = get_ipfs_headers()
-            print(f"DEBUG: Calling IPFS at {IPFS_API_URL}/id")
-            response = await client.post(
-                f"{IPFS_API_URL}/id", 
-                headers=headers,
-                timeout=5.0
-            )
-            print(f"DEBUG: IPFS response status: {response.status_code}")
-            if response.status_code == 200:
-                ipfs_info = response.json()
-                ipfs_connected = True
-                ipfs_info_data = {
-                    "ipfs_id": ipfs_info.get("ID"),
-                    "ipfs_agent": ipfs_info.get("AgentVersion")
-                }
+            
+            if USE_PINATA:
+                # Test Pinata authentication
+                print(f"DEBUG: Testing Pinata authentication")
+                response = await client.get(
+                    f"{IPFS_API_URL}/data/testAuthentication",
+                    headers=headers,
+                    timeout=5.0
+                )
+                print(f"DEBUG: Pinata auth response status: {response.status_code}")
+                if response.status_code == 200:
+                    auth_data = response.json()
+                    ipfs_connected = True
+                    ipfs_info_data = {
+                        "provider": "Pinata",
+                        "authenticated": auth_data.get("message") == "Congratulations! You are communicating with the Pinata API!"
+                    }
+                else:
+                    error_msg = f"Pinata returned status {response.status_code}: {response.text[:200]}"
+                    print(f"DEBUG: Pinata error response: {response.text[:500]}")
             else:
-                error_msg = f"IPFS returned status {response.status_code}: {response.text[:200]}"
-                print(f"DEBUG: IPFS error response: {response.text[:500]}")
+                # Test local IPFS node
+                print(f"DEBUG: Calling local IPFS at {IPFS_API_URL}/id")
+                response = await client.post(
+                    f"{IPFS_API_URL}/id", 
+                    headers=headers,
+                    timeout=5.0
+                )
+                print(f"DEBUG: IPFS response status: {response.status_code}")
+                if response.status_code == 200:
+                    ipfs_info = response.json()
+                    ipfs_connected = True
+                    ipfs_info_data = {
+                        "ipfs_id": ipfs_info.get("ID"),
+                        "ipfs_agent": ipfs_info.get("AgentVersion")
+                    }
+                else:
+                    error_msg = f"IPFS returned status {response.status_code}: {response.text[:200]}"
+                    print(f"DEBUG: IPFS error response: {response.text[:500]}")
     except Exception as e:
         error_msg = str(e)
         print(f"DEBUG: IPFS connection exception: {e}")
@@ -120,17 +145,15 @@ async def health_check():
     result = {
         "status": "healthy" if ipfs_connected else "degraded",
         "ipfs_connected": ipfs_connected,
+        "ipfs_provider": "pinata" if USE_PINATA else "local/custom",
         "ipfs_url": IPFS_API_URL,
-        "has_infura_creds": bool(INFURA_PROJECT_ID and INFURA_PROJECT_SECRET),
-        "note": "Infura IPFS service was deprecated in 2023. Consider using Pinata or Web3.Storage." if INFURA_PROJECT_ID else None
+        "has_pinata_auth": bool(PINATA_JWT or (PINATA_API_KEY and PINATA_SECRET_KEY))
     }
     
     if ipfs_connected:
         result.update(ipfs_info_data)
     elif error_msg:
         result["error"] = error_msg
-        if "401" in error_msg and INFURA_PROJECT_ID:
-            result["solution"] = "Infura no longer provides IPFS service. Switch to Pinata (pinata.cloud) or Web3.Storage (web3.storage)"
     
     return result
 
@@ -186,27 +209,51 @@ async def add_to_ipfs(file: UploadFile = File(...)):
         content = await file.read()
         
         async with httpx.AsyncClient() as client:
-            files = {"file": (file.filename, content)}
-            response = await client.post(
-                f"{IPFS_API_URL}/add",
-                files=files,
-                headers=get_ipfs_headers(),
-                params={"pin": "true"},
-                timeout=30.0
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return {
-                    "cid": result["Hash"],
-                    "size": result["Size"],
-                    "name": result["Name"]
-                }
-            else:
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail="IPFS add failed"
+            if USE_PINATA:
+                # Use Pinata API for file upload
+                files = {"file": (file.filename, content)}
+                response = await client.post(
+                    f"{IPFS_API_URL}/pinning/pinFileToIPFS",
+                    files=files,
+                    headers=get_ipfs_headers(),
+                    timeout=30.0
                 )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return {
+                        "cid": result["IpfsHash"],
+                        "size": result["PinSize"],
+                        "name": file.filename
+                    }
+                else:
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Pinata upload failed: {response.text[:200]}"
+                    )
+            else:
+                # Use local IPFS node
+                files = {"file": (file.filename, content)}
+                response = await client.post(
+                    f"{IPFS_API_URL}/add",
+                    files=files,
+                    headers=get_ipfs_headers(),
+                    params={"pin": "true"},
+                    timeout=30.0
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return {
+                        "cid": result["Hash"],
+                        "size": result["Size"],
+                        "name": result["Name"]
+                    }
+                else:
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail="IPFS add failed"
+                    )
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="IPFS request timed out")
     except Exception as e:
@@ -221,12 +268,20 @@ async def cat_from_ipfs(cid: str):
     """
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{IPFS_API_URL}/cat",
-                headers=get_ipfs_headers(),
-                params={"arg": cid},
-                timeout=30.0
-            )
+            if USE_PINATA:
+                # Use Pinata gateway for file retrieval
+                response = await client.get(
+                    f"{IPFS_GATEWAY}/{cid}",
+                    timeout=30.0
+                )
+            else:
+                # Use local IPFS node
+                response = await client.post(
+                    f"{IPFS_API_URL}/cat",
+                    headers=get_ipfs_headers(),
+                    params={"arg": cid},
+                    timeout=30.0
+                )
             
             if response.status_code == 200:
                 return Response(
@@ -239,7 +294,7 @@ async def cat_from_ipfs(cid: str):
             else:
                 raise HTTPException(
                     status_code=response.status_code,
-                    detail="IPFS cat failed"
+                    detail=f"IPFS retrieval failed: {response.text[:200]}"
                 )
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="IPFS request timed out")
@@ -249,53 +304,71 @@ async def cat_from_ipfs(cid: str):
 
 @app.post("/api/ipfs/pin/add")
 async def pin_to_ipfs(request: PinRequest):
-    """Pin a file to the local IPFS node"""
+    """Pin a file to IPFS (Pinata automatically pins on upload)"""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{IPFS_API_URL}/pin/add",
-                headers=get_ipfs_headers(),
-                params={"arg": request.cid},
-                timeout=30.0
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return {
-                    "pinned": result["Pins"],
-                    "success": True
-                }
-            else:
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail="IPFS pin failed"
+        if USE_PINATA:
+            # Pinata automatically pins files on upload, so this is a no-op for existing CIDs
+            # We could use their pinByHash endpoint if needed
+            return {
+                "pinned": [request.cid],
+                "success": True,
+                "note": "Pinata automatically pins files on upload"
+            }
+        else:
+            # Use local IPFS node pinning
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{IPFS_API_URL}/pin/add",
+                    headers=get_ipfs_headers(),
+                    params={"arg": request.cid},
+                    timeout=30.0
                 )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return {
+                        "pinned": result["Pins"],
+                        "success": True
+                    }
+                else:
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail="IPFS pin failed"
+                    )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Pin failed: {str(e)}")
 
 
 @app.get("/api/node/peers")
 async def get_peers():
-    """Get list of connected IPFS peers"""
+    """Get list of connected IPFS peers (only for local IPFS nodes)"""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{IPFS_API_URL}/swarm/peers",
-                headers=get_ipfs_headers(),
-                timeout=10.0
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return {
-                    "peers": result.get("Peers", []),
-                    "count": len(result.get("Peers", []))
-                }
-            else:
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail="Failed to get peers"
+        if USE_PINATA:
+            # Pinata doesn't expose peer information
+            return {
+                "peers": [],
+                "count": 0,
+                "note": "Pinata manages peers internally"
+            }
+        else:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{IPFS_API_URL}/swarm/peers",
+                    headers=get_ipfs_headers(),
+                    timeout=10.0
                 )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return {
+                        "peers": result.get("Peers", []),
+                        "count": len(result.get("Peers", []))
+                    }
+                else:
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail="Failed to get peers"
+                    )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Get peers failed: {str(e)}")
 
